@@ -1,0 +1,58 @@
+# TradingSystem 依赖包
+
+# ==================== 核心依赖（必需）====================
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+schedule>=1.2.0
+
+# ==================== A股数据（推荐）====================
+# Tushare - A股数据
+tushare>=1.4.0
+
+# ==================== 港股数据（可选）====================
+# Futu OpenAPI
+futu-api>=6.5.0
+
+# ==================== AI支持（可选，推荐至少装一个）====================
+# OpenAI SDK（支持DeepSeek和ChatGPT）
+openai>=1.12.0
+
+# Anthropic SDK（支持Claude）
+# anthropic>=0.18.0
+
+# 阿里云SDK（支持通义千问）
+# dashscope>=1.14.0
+
+# ==================== UI界面 =====================
+PyQt6>=6.4.0
+matplotlib>=3.7.0  # 用于回测图表
+# pyqtgraph>=0.13.1  # 可选，用于高级图表
+
+# ==================== 工具库（可选）====================
+# 日志
+loguru>=0.7.0
+
+# JSON处理
+orjson>=3.9.0
+
+# ==================== 安装说明 ====================
+# 
+# 最小安装（仅美股）：
+#   pip install pandas numpy requests python-dotenv schedule
+#
+# 推荐安装（美股+A股+AI）：
+#   pip install pandas numpy requests python-dotenv schedule tushare openai
+#
+# 完整安装（所有功能）：
+#   pip install -r requirements.txt
+#
+# 单独安装AI支持：
+#   pip install openai              # DeepSeek/ChatGPT
+#   pip install anthropic           # Claude
+#   pip install dashscope           # 通义千问
+#
+# 港股支持：
+#   pip install futu-api
+#
