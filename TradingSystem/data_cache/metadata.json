@@ -1,0 +1,10 @@
+{
+  "TSLA": {
+    "ticker": "TSLA",
+    "rows": 252,
+    "start_date": "2025-01-21",
+    "end_date": "2026-01-21",
+    "last_update": "2026-01-21 17:44:11",
+    "cache_file": "TSLA_prices.csv"
+  }
+}
