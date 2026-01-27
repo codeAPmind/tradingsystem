@@ -157,8 +157,15 @@ class BacktestWidget(QWidget):
         basic_group = QGroupBox("基本参数")
         basic_layout = QFormLayout(basic_group)
         
+        # 市场选择（新增）
+        self.market_combo = QComboBox()
+        self.market_combo.addItems(['美股', '港股'])
+        self.market_combo.currentTextChanged.connect(self.on_market_changed)
+        basic_layout.addRow("市场:", self.market_combo)
+        
         # 股票代码
         self.stock_code_input = QLineEdit("TSLA")
+        self.stock_code_input.setPlaceholderText("美股输入字母代码，港股输入数字代码")
         basic_layout.addRow("股票代码:", self.stock_code_input)
         
         # 日期范围
@@ -336,6 +343,61 @@ class BacktestWidget(QWidget):
         
         return panel
     
+    def on_market_changed(self, market):
+        """市场选择变化回调"""
+        if market == '美股':
+            self.stock_code_input.setPlaceholderText("输入字母代码，如 TSLA")
+            # 如果当前是港股代码，清空
+            current = self.stock_code_input.text().strip()
+            if current.startswith('HK.'):
+                self.stock_code_input.clear()
+        else:  # 港股
+            self.stock_code_input.setPlaceholderText("输入数字代码，如 01797")
+            # 如果当前不是港股格式，清空
+            current = self.stock_code_input.text().strip()
+            if current and not current.startswith('HK.') and not current.isdigit():
+                self.stock_code_input.clear()
+    
+    def format_stock_code(self, code, market):
+        """
+        格式化股票代码
+        
+        Parameters:
+        -----------
+        code : str
+            原始代码
+        market : str
+            市场（'美股' 或 '港股'）
+        
+        Returns:
+        --------
+        str : 格式化后的代码
+        """
+        code = code.strip().upper()
+        
+        if market == '港股':
+            # 港股处理
+            if code.startswith('HK.'):
+                # 已经有HK.前缀
+                return code
+            else:
+                # 纯数字，添加HK.前缀
+                # 去掉可能的前导0，然后补齐5位
+                try:
+                    num = int(code)
+                    return f"HK.{num:05d}"
+                except ValueError:
+                    # 不是纯数字，可能是错误输入
+                    return f"HK.{code}"
+        else:
+            # 美股处理
+            if code.startswith('HK.'):
+                # 移除HK.前缀（用户可能切换了市场）
+                return code.replace('HK.', '')
+            else:
+                # 直接返回
+                return code
+    
     def on_strategy_changed(self, strategy_name):
         """策略改变回调"""
         # 根据策略显示/隐藏相关参数
@@ -362,9 +424,16 @@ class BacktestWidget(QWidget):
             QMessageBox.warning(self, "错误", "backtrader未安装，无法进行回测\n请运行: pip install backtrader")
             return
         
+        # 获取原始代码
+        raw_code = self.stock_code_input.text().strip()
+        market = self.market_combo.currentText()
+        
+        # 格式化代码
+        stock_code = self.format_stock_code(raw_code, market)
+        
         # 收集参数
         params = {
-            'stock_code': self.stock_code_input.text().strip().upper(),
+            'stock_code': stock_code,
             'start_date': self.start_date_input.date().toString('yyyy-MM-dd'),
             'end_date': self.end_date_input.date().toString('yyyy-MM-dd'),
             'initial_cash': self.initial_cash_input.value(),
@@ -380,13 +449,17 @@ class BacktestWidget(QWidget):
         }
         
         # 验证参数
-        if not params['stock_code']:
+        if not raw_code:
             QMessageBox.warning(self, "错误", "请输入股票代码")
             return
         
         if params['start_date'] >= params['end_date']:
             QMessageBox.warning(self, "错误", "开始日期必须早于结束日期")
             return
+        
+        # 显示格式化后的代码
+        if raw_code != stock_code:
+            self.status_label.setText(f"代码已格式化: {raw_code} → {stock_code}")
         
         # 禁用按钮
         self.run_btn.setEnabled(False)

@@ -1,6 +1,7 @@
 """
 统一数据管理器
 自动识别美股/港股/A股，调用对应API
+优先使用本地缓存
 """
 import sys
 from pathlib import Path
@@ -17,10 +18,32 @@ from config.settings import get_market_type
 
 
 class DataManager:
-    """统一数据管理器"""
+    """统一数据管理器（缓存优先）"""
     
-    def __init__(self):
-        """初始化数据管理器"""
+    def __init__(self, use_cache=True):
+        """
+        初始化数据管理器
+        
+        Parameters:
+        -----------
+        use_cache : bool
+            是否使用缓存（默认True）
+        """
+        self.use_cache = use_cache
+        
+        # 初始化缓存
+        if use_cache:
+            try:
+                from data.data_cache import DataCache
+                self.cache = DataCache()
+                print("✅ 缓存系统已启用")
+            except Exception as e:
+                print(f"⚠️  缓存系统初始化失败: {e}")
+                self.cache = None
+                self.use_cache = False
+        else:
+            self.cache = None
+        
         # 延迟导入，避免循环依赖
         try:
             from data.futu_data import FutuDataFetcher
@@ -38,7 +61,6 @@ class DataManager:
             spec.loader.exec_module(financial_module)
             self.FinancialDatasetsAPI = financial_module.FinancialDatasetsAPI
             self.financial_available = True
-            # API密钥检查在_init_financial()中进行
         except Exception as e:
             # 如果直接导入失败，尝试常规导入
             try:
@@ -69,7 +91,7 @@ class DataManager:
     def _init_futu(self):
         """初始化Futu连接"""
         if not self.futu_available:
-            return
+            return False
         
         if self.futu_fetcher is None:
             try:
@@ -77,7 +99,7 @@ class DataManager:
                 self.futu_fetcher = FutuDataFetcher()
             except (ImportError, ModuleNotFoundError):
                 self.futu_available = False
-                return
+                return False
         
         if not self.futu_connected:
             try:
@@ -86,11 +108,14 @@ class DataManager:
             except Exception as e:
                 print(f"❌ Futu连接失败: {e}")
                 self.futu_connected = False
+                return False
+        
+        return True
     
     def _init_financial(self):
         """初始化Financial Datasets API"""
         if not self.financial_available:
-            return
+            return False
         
         if self.financial_api is None:
             try:
@@ -101,29 +126,32 @@ class DataManager:
                     print("⚠️  FINANCIAL_DATASETS_API_KEY未设置，美股数据功能不可用")
                     self.financial_available = False
                     self.financial_api = None
-                else:
-                    print("✅ FinancialDatasets API已初始化（API密钥已配置）")
+                    return False
             except Exception as e:
                 print(f"⚠️  FinancialDatasets初始化失败: {e}")
                 self.financial_available = False
                 self.financial_api = None
+                return False
+        
+        return True
     
     def _init_tushare(self):
         """初始化Tushare"""
         if self.tushare_available and self.tushare_fetcher is None:
             from data.tushare_data import TushareDataFetcher
             self.tushare_fetcher = TushareDataFetcher()
+            return True
+        return self.tushare_available
     
     def get_kline_data(
         self, 
         stock_code: str, 
         start_date: str, 
         end_date: str,
-        use_cache: bool = True,
         force_update: bool = False
     ) -> Optional[pd.DataFrame]:
         """
-        获取K线数据（自动识别数据源）
+        获取K线数据（缓存优先策略）
         
         Parameters:
         -----------
@@ -136,86 +164,91 @@ class DataManager:
             开始日期 'YYYY-MM-DD'
         end_date : str
             结束日期 'YYYY-MM-DD'
-        use_cache : bool
-            是否使用缓存
         force_update : bool
-            是否强制更新
+            是否强制从API更新（跳过缓存）
         
         Returns:
         --------
         DataFrame : K线数据
             包含: date, open, high, low, close, volume
+            date 列为字符串格式 'YYYY-MM-DD'
         """
         original_code = stock_code.strip()
         
-        # 特殊处理：如果用户在回测里直接输入数字（常见于港股，例如 1797）
+        # 特殊处理：如果用户直接输入数字（常见于港股）
         # 4~5位数字优先按港股处理，自动补全为 HK.xxxxx
         if original_code.isdigit() and 4 <= len(original_code) <= 5:
             stock_code = f"HK.{int(original_code):05d}"
+            print(f"🔄 [Manager] 自动格式化: {original_code} → {stock_code}")
         else:
             stock_code = original_code
         
         market = get_market_type(stock_code)
         
-        print(f"📊 获取 {stock_code} ({market}) K线数据...")
-        print(f"   日期范围: {start_date} 至 {end_date}")
+        print(f"\n📊 [Manager] 获取 {stock_code} ({market}) K线数据")
+        print(f"   日期范围: {start_date} ~ {end_date}")
+        print(f"   缓存: {'启用' if self.use_cache and not force_update else '禁用'}")
         
-        # 先尝试从缓存加载
-        if use_cache and not force_update:
+        # === 步骤1: 优先从缓存加载 ===
+        if self.use_cache and not force_update and self.cache:
+            print(f"   步骤1: 尝试从缓存加载...")
             try:
-                from utils.cache import DataCache
-                cache = DataCache()
-                cached_data = cache.get_prices(stock_code, start_date, end_date)
+                cached_data = self.cache.load(stock_code, start_date, end_date)
                 if cached_data is not None:
+                    print(f"   ✅ 使用缓存数据 ({len(cached_data)}行)")
                     return cached_data
-            except (ImportError, ModuleNotFoundError, Exception) as e:
-                # 缓存不可用时继续，不报错
-                pass
+                else:
+                    print(f"   ⚪ 缓存未命中")
+            except Exception as e:
+                print(f"   ⚠️  缓存读取失败: {e}")
         
-        # 从API获取
+        # === 步骤2: 从API获取 ===
+        print(f"   步骤2: 从API获取数据...")
         df = None
         
         if market == 'HK':
             # 港股 - 使用Futu
-            self._init_futu()
-            if self.futu_connected:
-                df = self.futu_fetcher.get_history_kline(
-                    stock_code, start_date, end_date
-                )
+            if not self._init_futu():
+                print(f"   ❌ Futu初始化失败")
+                print(f"   请确保: 1) Futu OpenD已启动 2) 已登录账户")
+                return None
+            
+            df = self.futu_fetcher.get_history_kline(
+                stock_code, start_date, end_date
+            )
         
         elif market == 'US':
             # 美股 - 使用Financial Datasets
-            if not self.financial_available:
-                print(f"❌ FinancialDatasets模块不可用，无法获取美股数据")
+            if not self._init_financial():
+                print(f"   ❌ FinancialDatasets初始化失败")
                 return None
-            self._init_financial()
-            if self.financial_api is None:
-                print(f"❌ FinancialDatasets API未初始化（可能缺少API密钥）")
-                return None
+            
             df = self.financial_api.get_stock_prices(
                 stock_code, start_date, end_date
             )
         
         elif market == 'A':
             # A股 - 使用Tushare
-            if self.tushare_available:
-                self._init_tushare()
-                df = self.tushare_fetcher.get_history_kline(
-                    stock_code, start_date, end_date
-                )
-            else:
-                print(f"❌ Tushare未安装，无法获取A股数据")
+            if not self._init_tushare():
+                print(f"   ❌ Tushare初始化失败")
                 return None
+            
+            df = self.tushare_fetcher.get_history_kline(
+                stock_code, start_date, end_date
+            )
         
-        # 保存到缓存
-        if df is not None and use_cache:
+        # === 步骤3: 保存到缓存 ===
+        if df is not None and self.use_cache and self.cache:
+            print(f"   步骤3: 保存到缓存...")
             try:
-                from utils.cache import DataCache
-                cache = DataCache()
-                cache.set_prices(stock_code, df)
-            except (ImportError, ModuleNotFoundError, Exception):
-                # 缓存不可用时继续，不报错
-                pass
+                self.cache.save(stock_code, start_date, end_date, df)
+            except Exception as e:
+                print(f"   ⚠️  缓存保存失败: {e}")
+        
+        if df is not None:
+            print(f"   ✅ 数据获取完成 ({len(df)}行)\n")
+        else:
+            print(f"   ❌ 数据获取失败\n")
         
         return df
     
@@ -236,8 +269,7 @@ class DataManager:
         
         if market == 'HK':
             # 港股实时价格
-            self._init_futu()
-            if self.futu_connected:
+            if self._init_futu():
                 return self.futu_fetcher.get_realtime_price(stock_code)
         
         elif market == 'US':
@@ -276,11 +308,37 @@ class DataManager:
         """
         market = get_market_type(stock_code)
         
-        if market == 'A' and self.tushare_available:
-            self._init_tushare()
+        if market == 'A' and self._init_tushare():
             return self.tushare_fetcher.get_stock_basic(stock_code)
         
         return None
+    
+    def list_cache(self):
+        """列出所有缓存"""
+        if self.cache:
+            self.cache.list_cache()
+        else:
+            print("⚠️  缓存未启用")
+    
+    def clear_cache(self, stock_code=None):
+        """
+        清除缓存
+        
+        Parameters:
+        -----------
+        stock_code : str, optional
+            如果指定，只清除该股票的缓存；否则清除所有
+        """
+        if self.cache:
+            self.cache.clear_cache(stock_code)
+        else:
+            print("⚠️  缓存未启用")
+    
+    def get_cache_size(self):
+        """获取缓存大小"""
+        if self.cache:
+            return self.cache.get_cache_size()
+        return "0 B"
     
     def disconnect(self):
         """断开所有连接"""
@@ -293,27 +351,41 @@ class DataManager:
 
 # 使用示例
 if __name__ == '__main__':
-    manager = DataManager()
+    print("\n" + "="*80)
+    print("数据管理器测试（缓存优先）")
+    print("="*80)
     
-    # 测试美股
-    print("\n=== 测试美股 ===")
-    df = manager.get_kline_data('TSLA', '2025-01-01', '2025-01-22')
-    if df is not None:
-        print(f"获取到 {len(df)} 条数据")
-        print(df.head())
+    manager = DataManager(use_cache=True)
     
-    # 测试港股
-    print("\n=== 测试港股 ===")
-    df = manager.get_kline_data('HK.01797', '2025-01-01', '2025-01-22')
-    if df is not None:
-        print(f"获取到 {len(df)} 条数据")
-        print(df.head())
+    # 测试1: 第一次获取港股数据（从API）
+    print("\n【测试1】第一次获取港股数据（从API）")
+    print("="*80)
+    df1 = manager.get_kline_data('HK.01797', '2024-12-01', '2025-01-27')
+    if df1 is not None:
+        print(f"✅ 成功: {len(df1)} 行")
+        print(df1.head())
     
-    # 测试A股
-    print("\n=== 测试A股 ===")
-    df = manager.get_kline_data('600519', '2025-01-01', '2025-01-22')
-    if df is not None:
-        print(f"获取到 {len(df)} 条数据")
-        print(df.head())
+    # 测试2: 第二次获取同样数据（从缓存）
+    print("\n【测试2】第二次获取同样数据（应该从缓存）")
+    print("="*80)
+    df2 = manager.get_kline_data('HK.01797', '2024-12-01', '2025-01-27')
+    if df2 is not None:
+        print(f"✅ 成功: {len(df2)} 行")
+    
+    # 测试3: 强制更新（跳过缓存）
+    print("\n【测试3】强制更新（跳过缓存）")
+    print("="*80)
+    df3 = manager.get_kline_data('HK.01797', '2024-12-01', '2025-01-27', force_update=True)
+    if df3 is not None:
+        print(f"✅ 成功: {len(df3)} 行")
+    
+    # 测试4: 列出所有缓存
+    print("\n【测试4】列出所有缓存")
+    print("="*80)
+    manager.list_cache()
+    
+    # 测试5: 缓存大小
+    print(f"【测试5】缓存大小: {manager.get_cache_size()}")
     
     manager.disconnect()
+    print("\n✅ 测试完成\n")

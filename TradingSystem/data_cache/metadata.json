@@ -6,5 +6,29 @@
     "end_date": "2026-01-21",
     "last_update": "2026-01-21 17:44:11",
     "cache_file": "TSLA_prices.csv"
+  },
+  "HK.01797_2025-01-27_2026-01-27": {
+    "stock_code": "HK.01797",
+    "start_date": "2025-01-27",
+    "end_date": "2026-01-27",
+    "rows": 247,
+    "cached_at": "2026-01-27 16:26:00",
+    "file_path": "data_cache\\HK_01797_2025-01-27_2026-01-27.csv"
+  },
+  "HK.01797_2025-11-28_2026-01-27": {
+    "stock_code": "HK.01797",
+    "start_date": "2025-11-28",
+    "end_date": "2026-01-27",
+    "rows": 40,
+    "cached_at": "2026-01-27 17:12:38",
+    "file_path": "data_cache\\HK_01797_2025-11-28_2026-01-27.csv"
+  },
+  "TSLA_2025-01-27_2026-01-27": {
+    "stock_code": "TSLA",
+    "start_date": "2025-01-27",
+    "end_date": "2026-01-27",
+    "rows": 252,
+    "cached_at": "2026-01-27 17:20:24",
+    "file_path": "data_cache\\TSLA_2025-01-27_2026-01-27.csv"
   }
 }

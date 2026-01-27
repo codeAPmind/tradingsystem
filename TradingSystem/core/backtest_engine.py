@@ -76,10 +76,24 @@ class BacktestEngine:
         if 'date' not in df.columns:
             raise ValueError("数据必须包含'date'列")
         
-        # 设置日期为索引
+        # 准备数据
         df_bt = df.copy()
+        
+        # 关键修复：将date列转换为datetime类型
+        if 'date' in df_bt.columns:
+            df_bt['date'] = pd.to_datetime(df_bt['date'])
+            print(f"   ✅ Date列已转换为datetime类型")
+        
+        # 设置日期为索引
         if not isinstance(df_bt.index, pd.DatetimeIndex):
             df_bt = df_bt.set_index('date')
+        
+        # 验证DatetimeIndex
+        if not isinstance(df_bt.index, pd.DatetimeIndex):
+            raise ValueError("无法将date转换为DatetimeIndex")
+        
+        print(f"   数据行数: {len(df_bt)}")
+        print(f"   日期范围: {df_bt.index[0].date()} ~ {df_bt.index[-1].date()}")
         
         # 确保列名正确
         required_cols = ['open', 'high', 'low', 'close', 'volume']

@@ -1,0 +1,492 @@
+"""
+回测引擎
+基于backtrader的回测系统
+"""
+import sys
+from pathlib import Path
+from typing import Optional, Dict, List
+import pandas as pd
+from datetime import datetime
+
+# 添加父目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'futu_backtest_trader'))
+
+try:
+    import backtrader as bt
+    BACKTRADER_AVAILABLE = True
+except ImportError:
+    BACKTRADER_AVAILABLE = False
+    print("⚠️  backtrader未安装，回测功能不可用")
+    print("   请运行: pip install backtrader")
+
+
+class BacktestEngine:
+    """回测引擎"""
+    
+    def __init__(self, initial_cash: float = 100000.0, commission: float = 0.001):
+        """
+        初始化回测引擎
+        
+        Parameters:
+        -----------
+        initial_cash : float
+            初始资金
+        commission : float
+            佣金比例（默认0.001即0.1%）
+        """
+        if not BACKTRADER_AVAILABLE:
+            raise ImportError("backtrader未安装，无法使用回测功能")
+        
+        self.cerebro = bt.Cerebro()
+        self.cerebro.broker.setcash(initial_cash)
+        self.initial_cash = initial_cash
+        self.commission = commission
+        
+        # 设置手续费
+        self.cerebro.broker.setcommission(commission=commission)
+        
+        # 设置每次交易大小为95%资金
+        self.cerebro.addsizer(bt.sizers.PercentSizer, percents=95)
+        
+        # 添加分析器
+        self.cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        self.cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+        self.cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+        self.cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+        
+        # 注意：backtrader没有Value分析器，我们通过策略记录收益曲线
+        
+        print("✅ 回测引擎已初始化")
+    
+    def add_data_from_dataframe(self, df: pd.DataFrame, stock_code: str = ""):
+        """
+        从DataFrame添加数据
+        
+        Parameters:
+        -----------
+        df : DataFrame
+            K线数据，必须包含: date, open, high, low, close, volume
+        stock_code : str
+            股票代码（用于标识）
+        """
+        if df is None or len(df) == 0:
+            raise ValueError("数据为空")
+        
+        # 确保有date列
+        if 'date' not in df.columns:
+            raise ValueError("数据必须包含'date'列")
+        
+        # 设置日期为索引
+        df_bt = df.copy()
+        if not isinstance(df_bt.index, pd.DatetimeIndex):
+            df_bt = df_bt.set_index('date')
+        
+        # 确保列名正确
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in required_cols:
+            if col not in df_bt.columns:
+                raise ValueError(f"数据必须包含'{col}'列")
+        
+        # 转换为数值类型
+        for col in required_cols:
+            df_bt[col] = pd.to_numeric(df_bt[col], errors='coerce')
+        
+        # 删除NaN行
+        df_bt = df_bt.dropna()
+        
+        if len(df_bt) == 0:
+            raise ValueError("数据清洗后为空")
+        
+        # 创建backtrader数据源
+        data_feed = bt.feeds.PandasData(
+            dataname=df_bt,
+            datetime=None,  # 使用索引作为日期
+            open='open',
+            high='high',
+            low='low',
+            close='close',
+            volume='volume',
+            openinterest=-1
+        )
+        
+        self.cerebro.adddata(data_feed, name=stock_code)
+        print(f"✅ 已添加数据: {stock_code} ({len(df_bt)}条)")
+    
+    def add_strategy(self, strategy_class, **params):
+        """
+        添加策略
+        
+        Parameters:
+        -----------
+        strategy_class : class
+            策略类（backtrader.Strategy的子类）
+        **params : dict
+            策略参数
+        """
+        self.cerebro.addstrategy(strategy_class, **params)
+        print(f"✅ 已添加策略: {strategy_class.__name__}")
+        print(f"   参数: {params}")
+    
+    def run(self) -> Dict:
+        """
+        运行回测
+        
+        Returns:
+        --------
+        dict : 回测结果
+        """
+        print(f"\n{'='*70}")
+        print(f"开始回测")
+        print(f"{'='*70}")
+        print(f"初始资金: ${self.initial_cash:,.2f}")
+        print(f"佣金比例: {self.commission*100:.2f}%")
+        
+        # 运行回测
+        results = self.cerebro.run()
+        strat = results[0]
+        
+        # 保存结果供绘图使用
+        self._last_results = results
+        
+        # 获取最终资金
+        final_value = self.cerebro.broker.getvalue()
+        profit = final_value - self.initial_cash
+        profit_pct = (profit / self.initial_cash) * 100
+        
+        # 获取分析结果
+        analysis = self._get_analysis(strat)
+        
+        # 获取收益曲线数据（从策略中获取）
+        equity_curve = []
+        try:
+            # 尝试从策略的equity_curve属性获取数据
+            if hasattr(strat, 'equity_curve') and strat.equity_curve:
+                equity_curve = self._extract_equity_curve_from_list(strat.equity_curve)
+            else:
+                # 如果无法获取详细曲线，至少提供初始和最终值
+                equity_curve = [
+                    {'date': datetime.now(), 'value': self.initial_cash},
+                    {'date': datetime.now(), 'value': final_value}
+                ]
+        except Exception as e:
+            # 如果获取失败，使用简化数据
+            equity_curve = [
+                {'date': datetime.now(), 'value': self.initial_cash},
+                {'date': datetime.now(), 'value': final_value}
+            ]
+        
+        # 获取买卖信号（用于绘图）
+        buy_signals = []
+        sell_signals = []
+        if hasattr(strat, 'buy_signals'):
+            buy_signals = [(str(date), float(price)) for date, price in strat.buy_signals]
+        if hasattr(strat, 'sell_signals'):
+            sell_signals = [(str(date), float(price)) for date, price in strat.sell_signals]
+        
+        result = {
+            'initial_cash': self.initial_cash,
+            'final_value': final_value,
+            'profit': profit,
+            'profit_pct': profit_pct,
+            'analysis': analysis,
+            'equity_curve': equity_curve,
+            'buy_signals': buy_signals,
+            'sell_signals': sell_signals
+        }
+        
+        # 打印结果
+        self._print_results(result)
+        
+        return result
+    
+    def _get_analysis(self, strat) -> Dict:
+        """获取分析结果"""
+        analysis = {}
+        
+        # 夏普比率
+        try:
+            sharpe = strat.analyzers.sharpe.get_analysis()
+            analysis['sharpe_ratio'] = sharpe.get('sharperatio', None)
+        except:
+            analysis['sharpe_ratio'] = None
+        
+        # 最大回撤
+        try:
+            drawdown = strat.analyzers.drawdown.get_analysis()
+            analysis['max_drawdown'] = drawdown.get('max', {}).get('drawdown', 0)
+        except:
+            analysis['max_drawdown'] = 0
+        
+        # 年化收益率
+        try:
+            returns = strat.analyzers.returns.get_analysis()
+            analysis['annual_return'] = returns.get('rnorm100', None)
+        except:
+            analysis['annual_return'] = None
+        
+        # 交易统计
+        try:
+            trades = strat.analyzers.trades.get_analysis()
+            analysis['total_trades'] = trades.get('total', {}).get('closed', 0)
+            analysis['won_trades'] = trades.get('won', {}).get('total', 0)
+            analysis['lost_trades'] = trades.get('lost', {}).get('total', 0)
+            
+            if analysis['total_trades'] > 0:
+                analysis['win_rate'] = (analysis['won_trades'] / analysis['total_trades']) * 100
+            else:
+                analysis['win_rate'] = 0
+        except:
+            analysis['total_trades'] = 0
+            analysis['won_trades'] = 0
+            analysis['lost_trades'] = 0
+            analysis['win_rate'] = 0
+        
+        return analysis
+    
+    def _extract_equity_curve_from_list(self, equity_list) -> List[Dict]:
+        """从策略记录的列表中提取收益曲线数据"""
+        equity_curve = []
+        
+        for item in equity_list:
+            try:
+                date = item.get('date')
+                value = item.get('value')
+                
+                # 转换日期格式
+                if isinstance(date, str):
+                    date = pd.to_datetime(date)
+                elif hasattr(date, 'isoformat'):
+                    date = pd.to_datetime(date.isoformat())
+                
+                equity_curve.append({
+                    'date': date,
+                    'value': float(value)
+                })
+            except Exception as e:
+                continue
+        
+        # 如果数据为空，至少提供初始和最终值
+        if not equity_curve:
+            equity_curve = [
+                {'date': datetime.now(), 'value': self.initial_cash},
+                {'date': datetime.now(), 'value': self.cerebro.broker.getvalue()}
+            ]
+        
+        return equity_curve
+    
+    def _print_results(self, result: Dict):
+        """打印回测结果"""
+        print(f"\n{'='*70}")
+        print(f"回测结果")
+        print(f"{'='*70}")
+        print(f"初始资金: ${result['initial_cash']:,.2f}")
+        print(f"最终资金: ${result['final_value']:,.2f}")
+        print(f"总收益: ${result['profit']:,.2f} ({result['profit_pct']:+.2f}%)")
+        
+        analysis = result['analysis']
+        
+        if analysis['sharpe_ratio'] is not None:
+            print(f"夏普比率: {analysis['sharpe_ratio']:.4f}")
+        else:
+            print(f"夏普比率: N/A")
+        
+        print(f"最大回撤: {analysis['max_drawdown']:.2f}%")
+        
+        if analysis['annual_return'] is not None:
+            print(f"年化收益率: {analysis['annual_return']:.2f}%")
+        else:
+            print(f"年化收益率: N/A")
+        
+        print(f"\n交易统计:")
+        print(f"  总交易次数: {analysis['total_trades']}")
+        print(f"  盈利次数: {analysis['won_trades']}")
+        print(f"  亏损次数: {analysis['lost_trades']}")
+        print(f"  胜率: {analysis['win_rate']:.2f}%")
+        
+        print(f"{'='*70}\n")
+    
+    def plot(self, style='candlestick', show_signals=True):
+        """
+        绘制图表（带买卖信号标注）
+        
+        Parameters:
+        -----------
+        style : str
+            图表样式（'candlestick', 'line'等）
+        show_signals : bool
+            是否显示买卖信号标注
+        """
+        try:
+            if show_signals:
+                # 自定义买卖信号颜色
+                # loc='green' 表示买入信号（绿色向上箭头）
+                # loc='red' 表示卖出信号（红色向下箭头）
+                self.cerebro.plot(
+                    style=style,
+                    barup='green',      # 阳线颜色（绿色）
+                    bardown='red',     # 阴线颜色（红色）
+                    loc='green',       # 买入信号颜色（绿色）
+                    locolors=['green'], # 买入信号颜色列表
+                    volup='green',     # 上涨成交量颜色
+                    voldown='red'      # 下跌成交量颜色
+                )
+            else:
+                self.cerebro.plot(style=style)
+        except Exception as e:
+            print(f"⚠️  图表生成失败: {e}")
+            print("   提示: 可能需要在有图形界面的环境运行")
+    
+    def plot_with_custom_signals(self, save_path=None):
+        """
+        使用matplotlib自定义绘制图表，显示详细的买卖信号标注
+        
+        Parameters:
+        -----------
+        save_path : str, optional
+            保存路径，如果提供则保存图片
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.dates as mdates
+            from matplotlib.patches import Rectangle
+        except ImportError:
+            print("⚠️  matplotlib未安装，无法绘制自定义图表")
+            print("   请运行: pip install matplotlib")
+            return
+        
+        # 运行回测（如果还没运行）
+        if not hasattr(self, '_last_results'):
+            print("⚠️  请先运行回测: engine.run()")
+            return
+        
+        results = self._last_results
+        strat = results[0]
+        
+        # 获取数据
+        data = self.cerebro.datas[0]
+        dates = [data.datetime.date(i) for i in range(len(data))]
+        closes = [data.close[i] for i in range(len(data))]
+        opens = [data.open[i] for i in range(len(data))]
+        highs = [data.high[i] for i in range(len(data))]
+        lows = [data.low[i] for i in range(len(data))]
+        volumes = [data.volume[i] for i in range(len(data))]
+        
+        # 获取买卖信号
+        buy_signals = []
+        sell_signals = []
+        if hasattr(strat, 'buy_signals'):
+            buy_signals = strat.buy_signals
+        if hasattr(strat, 'sell_signals'):
+            sell_signals = strat.sell_signals
+        
+        # 创建图表
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), 
+                                       gridspec_kw={'height_ratios': [3, 1]},
+                                       facecolor='#1e1e1e')
+        fig.patch.set_facecolor('#1e1e1e')
+        
+        # 绘制K线图
+        ax1.set_facecolor('#2d2d2d')
+        for i in range(len(dates)):
+            color = 'green' if closes[i] >= opens[i] else 'red'
+            # 绘制影线
+            ax1.plot([dates[i], dates[i]], [lows[i], highs[i]], 
+                    color=color, linewidth=1, alpha=0.5)
+            # 绘制实体
+            body_height = abs(closes[i] - opens[i])
+            bottom = min(opens[i], closes[i])
+            rect = Rectangle((mdates.date2num(dates[i]) - 0.3, bottom), 
+                           0.6, body_height, 
+                           facecolor=color, edgecolor=color, alpha=0.8)
+            ax1.add_patch(rect)
+        
+        # 绘制TSF和LSMA指标（如果策略有）
+        if hasattr(strat, 'tsf') and hasattr(strat, 'lsma'):
+            tsf_values = [strat.tsf[i] for i in range(len(dates))]
+            lsma_values = [strat.lsma[i] for i in range(len(dates))]
+            ax1.plot(dates, tsf_values, label='TSF', color='cyan', linewidth=1.5, alpha=0.7)
+            ax1.plot(dates, lsma_values, label='LSMA', color='yellow', linewidth=1.5, alpha=0.7)
+        
+        # 标注买入信号（绿色向上箭头）
+        if buy_signals:
+            for i, (date, price) in enumerate(buy_signals):
+                ax1.scatter(date, price, color='green', marker='^', s=200, 
+                           zorder=5, label='买入' if i == 0 else '')
+                ax1.annotate('买入', xy=(date, price), xytext=(5, 15),
+                            textcoords='offset points', color='green', 
+                            fontsize=9, fontweight='bold',
+                            bbox=dict(boxstyle='round,pad=0.3', facecolor='green', alpha=0.3))
+        
+        # 标注卖出信号（红色向下箭头）
+        if sell_signals:
+            for i, (date, price) in enumerate(sell_signals):
+                ax1.scatter(date, price, color='red', marker='v', s=200,
+                           zorder=5, label='卖出' if i == 0 else '')
+                ax1.annotate('卖出', xy=(date, price), xytext=(5, -20),
+                            textcoords='offset points', color='red',
+                            fontsize=9, fontweight='bold',
+                            bbox=dict(boxstyle='round,pad=0.3', facecolor='red', alpha=0.3))
+        
+        ax1.set_ylabel('价格 ($)', color='white', fontsize=12)
+        ax1.set_title('回测K线图（带买卖信号）', color='white', fontsize=14, fontweight='bold')
+        ax1.legend(loc='upper left')
+        ax1.grid(True, alpha=0.3, color='gray')
+        ax1.tick_params(colors='white')
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
+        
+        # 设置坐标轴颜色
+        for spine in ax1.spines.values():
+            spine.set_color('white')
+        
+        # 绘制成交量
+        ax2.set_facecolor('#2d2d2d')
+        colors = ['green' if closes[i] >= opens[i] else 'red' for i in range(len(dates))]
+        ax2.bar(dates, volumes, color=colors, alpha=0.6, width=0.8)
+        ax2.set_ylabel('成交量', color='white', fontsize=12)
+        ax2.set_xlabel('日期', color='white', fontsize=12)
+        ax2.grid(True, alpha=0.3, color='gray')
+        ax2.tick_params(colors='white')
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
+        
+        # 设置坐标轴颜色
+        for spine in ax2.spines.values():
+            spine.set_color('white')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, facecolor='#1e1e1e', dpi=150, bbox_inches='tight')
+            print(f"✅ 图表已保存到: {save_path}")
+        else:
+            plt.show()
+        
+        return fig
+
+
+# 使用示例
+if __name__ == '__main__':
+    if not BACKTRADER_AVAILABLE:
+        print("请先安装backtrader: pip install backtrader")
+    else:
+        from core.data_manager import DataManager
+        
+        # 初始化
+        data_manager = DataManager()
+        engine = BacktestEngine(initial_cash=100000.0)
+        
+        # 获取数据
+        df = data_manager.get_kline_data('TSLA', '2024-01-01', '2025-01-22')
+        
+        if df is not None:
+            # 添加数据
+            engine.add_data_from_dataframe(df, 'TSLA')
+            
+            # 添加策略（需要backtrader策略类）
+            # engine.add_strategy(TSFLSMAStrategy, ...)
+            
+            # 运行回测
+            # result = engine.run()
+            
+            print("回测引擎测试完成")

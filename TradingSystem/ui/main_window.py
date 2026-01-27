@@ -1,6 +1,6 @@
 """
-主窗口
-量化交易系统主界面
+主窗口 - 增强版
+量化交易系统主界面（集成交易功能）
 """
 import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -14,7 +14,11 @@ from .widgets.chart_widget import ChartWidget
 from .widgets.signal_panel import SignalPanel
 from .widgets.position_widget import PositionWidget
 from .widgets.news_widget import NewsWidget
+from .widgets.trade_widget import TradeWidget
 from config import THEME, WINDOW_SIZE
+
+# 导入交易管理器
+from live_trading.trader_manager import TraderManager
 
 
 class MainWindow(QMainWindow):
@@ -41,6 +45,10 @@ class MainWindow(QMainWindow):
         self.strategy_engine = strategy_engine
         self.scheduler = scheduler
         self.ai_analyzer = ai_analyzer
+        
+        # 初始化交易管理器（模拟盘）
+        self.trader_manager = TraderManager(use_simulate=True)
+        self.is_connected = False
         
         # 当前选中的股票
         self.current_stock = None
@@ -102,6 +110,16 @@ class MainWindow(QMainWindow):
         connect_action.triggered.connect(self.connect_trade_account)
         trade_menu.addAction(connect_action)
         
+        disconnect_action = QAction('断开连接', self)
+        disconnect_action.triggered.connect(self.disconnect_trade_account)
+        trade_menu.addAction(disconnect_action)
+        
+        trade_menu.addSeparator()
+        
+        refresh_pos_action = QAction('刷新持仓', self)
+        refresh_pos_action.triggered.connect(self.refresh_positions)
+        trade_menu.addAction(refresh_pos_action)
+        
         # 工具菜单
         tools_menu = menubar.addMenu('工具')
         
@@ -127,6 +145,18 @@ class MainWindow(QMainWindow):
         
         # 连接按钮
         self.connect_btn = QPushButton("连接")
+        self.connect_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                padding: 5px 15px;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
         self.connect_btn.clicked.connect(self.connect_trade_account)
         toolbar.addWidget(self.connect_btn)
         
@@ -174,13 +204,13 @@ class MainWindow(QMainWindow):
         self.stock_list.setMaximumWidth(250)
         main_splitter.addWidget(self.stock_list)
         
-        # 中间：回测界面（主要）和K线图/信号（标签页）
-        center_tabs = QTabWidget()
+        # 中间：标签页（回测/K线图/交易）
+        self.center_tabs = QTabWidget()
         
-        # 回测标签页（默认显示）
+        # 回测标签页
         from .widgets.backtest_widget import BacktestWidget
         self.backtest_widget = BacktestWidget(self.data_manager, self.strategy_engine)
-        center_tabs.addTab(self.backtest_widget, "回测")
+        self.center_tabs.addTab(self.backtest_widget, "📊 回测")
         
         # K线图和信号标签页
         center_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -194,27 +224,30 @@ class MainWindow(QMainWindow):
         center_splitter.addWidget(self.signal_panel)
         
         center_splitter.setSizes([600, 200])
-        center_tabs.addTab(center_splitter, "K线图")
+        self.center_tabs.addTab(center_splitter, "📈 K线图")
         
-        main_splitter.addWidget(center_tabs)
+        # 交易面板（新增）
+        self.trade_widget = TradeWidget(self.trader_manager)
+        self.center_tabs.addTab(self.trade_widget, "🔄 交易")
+        
+        main_splitter.addWidget(self.center_tabs)
         
         # 右侧：持仓和新闻
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.right_tabs = QTabWidget()
         
-        # 持仓
-        self.position_widget = PositionWidget()
-        right_splitter.addWidget(self.position_widget)
+        # 持仓（增强版）
+        self.position_widget = PositionWidget(self.trader_manager)
+        self.right_tabs.addTab(self.position_widget, "📊 持仓")
         
         # 新闻
         self.news_widget = NewsWidget()
-        right_splitter.addWidget(self.news_widget)
+        self.right_tabs.addTab(self.news_widget, "📰 新闻")
         
-        right_splitter.setSizes([300, 200])
-        right_splitter.setMaximumWidth(300)
-        main_splitter.addWidget(right_splitter)
+        self.right_tabs.setMaximumWidth(350)
+        main_splitter.addWidget(self.right_tabs)
         
         # 设置分割器比例
-        main_splitter.setSizes([250, 1000, 300])
+        main_splitter.setSizes([250, 1000, 350])
         
         main_layout.addWidget(main_splitter)
     
@@ -224,8 +257,14 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         
         # 连接状态
-        self.connection_label = QLabel("未连接")
+        self.connection_label = QLabel("⚪ 未连接")
         self.status_bar.addWidget(self.connection_label)
+        
+        self.status_bar.addPermanentWidget(QLabel("|"))
+        
+        # 账户类型
+        self.account_label = QLabel("账户: 模拟盘")
+        self.status_bar.addPermanentWidget(self.account_label)
         
         self.status_bar.addPermanentWidget(QLabel("|"))
         
@@ -269,6 +308,9 @@ class MainWindow(QMainWindow):
                     background-color: #1e1e1e;
                     color: #ffffff;
                 }
+                QTabWidget::pane {
+                    border: 1px solid #3d3d3d;
+                }
             """)
     
     def connect_signals(self):
@@ -278,6 +320,13 @@ class MainWindow(QMainWindow):
         
         # 调度器信号回调
         self.scheduler.set_signal_callback(self.on_signal_received)
+        
+        # 交易面板信号
+        self.trade_widget.order_submitted.connect(self.on_order_submitted)
+        
+        # 持仓面板信号
+        self.position_widget.close_position.connect(self.on_close_position)
+        self.position_widget.add_position.connect(self.on_add_position)
     
     def on_stock_selected(self, stock_code: str):
         """股票选择回调"""
@@ -322,10 +371,48 @@ class MainWindow(QMainWindow):
                 f"{signal['stock']} - {signal['type']}\n{signal['reason']}"
             )
     
+    def on_order_submitted(self, order: dict):
+        """订单提交回调"""
+        print(f"[主窗口] 订单已提交: {order}")
+        
+        # 刷新持仓
+        QTimer.singleShot(2000, self.refresh_positions)  # 2秒后刷新
+    
+    def on_close_position(self, stock_code: str, qty: int):
+        """平仓回调"""
+        print(f"[主窗口] 平仓请求: {stock_code} {qty}股")
+        
+        # 切换到交易面板
+        self.center_tabs.setCurrentWidget(self.trade_widget)
+        
+        # 预填信息
+        self.trade_widget.set_stock_code(stock_code)
+        self.trade_widget.set_direction('SELL')
+        self.trade_widget.set_quantity(qty)
+    
+    def on_add_position(self, stock_code: str):
+        """加仓回调"""
+        print(f"[主窗口] 加仓请求: {stock_code}")
+        
+        # 切换到交易面板
+        self.center_tabs.setCurrentWidget(self.trade_widget)
+        
+        # 预填信息
+        self.trade_widget.set_stock_code(stock_code)
+        self.trade_widget.set_direction('BUY')
+    
     def refresh_data(self):
         """刷新数据"""
         if self.current_stock:
             self.load_stock_data(self.current_stock)
+        
+        # 刷新持仓
+        if self.is_connected:
+            self.refresh_positions()
+    
+    def refresh_positions(self):
+        """刷新持仓"""
+        self.position_widget.refresh_positions()
     
     def update_data(self):
         """定时更新数据"""
@@ -334,7 +421,85 @@ class MainWindow(QMainWindow):
     
     def connect_trade_account(self):
         """连接交易账户"""
-        QMessageBox.information(self, "提示", "交易账户连接功能待实现")
+        if self.is_connected:
+            QMessageBox.information(self, "提示", "已经连接")
+            return
+        
+        # 显示连接中
+        self.connect_btn.setEnabled(False)
+        self.connect_btn.setText("连接中...")
+        self.connection_label.setText("🟡 连接中...")
+        
+        try:
+            # 连接所有市场
+            success = self.trader_manager.connect_all()
+            
+            if success:
+                self.is_connected = True
+                self.connect_btn.setText("已连接")
+                self.connect_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #28a745;
+                        color: white;
+                        padding: 5px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                """)
+                self.connection_label.setText("🟢 已连接")
+                
+                # 刷新持仓
+                self.refresh_positions()
+                
+                QMessageBox.information(self, "成功", "交易账户连接成功！")
+            else:
+                self.connect_btn.setEnabled(True)
+                self.connect_btn.setText("连接")
+                self.connection_label.setText("⚪ 连接失败")
+                
+                QMessageBox.warning(
+                    self, "失败", 
+                    "交易账户连接失败\n\n请检查:\n"
+                    "1. Futu OpenD是否已启动\n"
+                    "2. 是否已登录账户\n"
+                    "3. 是否有交易权限"
+                )
+        except Exception as e:
+            self.connect_btn.setEnabled(True)
+            self.connect_btn.setText("连接")
+            self.connection_label.setText("⚪ 连接错误")
+            
+            QMessageBox.critical(self, "错误", f"连接出错:\n{str(e)}")
+    
+    def disconnect_trade_account(self):
+        """断开交易账户连接"""
+        if not self.is_connected:
+            QMessageBox.information(self, "提示", "未连接")
+            return
+        
+        try:
+            self.trader_manager.disconnect()
+            self.is_connected = False
+            
+            self.connect_btn.setEnabled(True)
+            self.connect_btn.setText("连接")
+            self.connect_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #28a745;
+                    color: white;
+                    padding: 5px 15px;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #218838;
+                }
+            """)
+            self.connection_label.setText("⚪ 未连接")
+            
+            QMessageBox.information(self, "成功", "已断开连接")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"断开连接出错:\n{str(e)}")
     
     def show_strategy_config(self):
         """显示策略配置"""
@@ -342,11 +507,11 @@ class MainWindow(QMainWindow):
     
     def show_backtest(self):
         """显示回测界面"""
-        QMessageBox.information(self, "提示", "回测功能待实现")
+        self.center_tabs.setCurrentWidget(self.backtest_widget)
     
     def show_trade(self):
         """显示交易界面"""
-        QMessageBox.information(self, "提示", "交易功能待实现")
+        self.center_tabs.setCurrentWidget(self.trade_widget)
     
     def show_scheduler(self):
         """显示任务调度界面"""
@@ -364,7 +529,10 @@ class MainWindow(QMainWindow):
             "量化交易系统 v1.0\n\n"
             "基于PyQt6开发的量化交易系统\n"
             "支持美股、港股、A股三个市场\n"
-            "集成多种交易策略和AI分析"
+            "集成多种交易策略和AI分析\n\n"
+            "✅ 实盘交易功能已集成\n"
+            "✅ 风控系统已启用\n"
+            "✅ 多市场支持"
         )
     
     def closeEvent(self, event):
@@ -381,8 +549,16 @@ class MainWindow(QMainWindow):
             # 停止定时器
             self.update_timer.stop()
             
-            # 断开连接
+            # 停止持仓刷新定时器
+            if hasattr(self.position_widget, 'stopTimer'):
+                self.position_widget.stopTimer()
+            
+            # 断开数据管理器
             self.data_manager.disconnect()
+            
+            # 断开交易管理器
+            if self.is_connected:
+                self.trader_manager.disconnect()
             
             event.accept()
         else:
