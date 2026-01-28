@@ -425,8 +425,8 @@ class BacktestEngine:
         if buy_signals:
             for i, (date, price) in enumerate(buy_signals):
                 ax1.scatter(date, price, color='green', marker='^', s=200, 
-                           zorder=5, label='买入' if i == 0 else '')
-                ax1.annotate('买入', xy=(date, price), xytext=(5, 15),
+                           zorder=5, label='buy' if i == 0 else '')
+                ax1.annotate('buy', xy=(date, price), xytext=(5, 15),
                             textcoords='offset points', color='green', 
                             fontsize=9, fontweight='bold',
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='green', alpha=0.3))
@@ -435,14 +435,14 @@ class BacktestEngine:
         if sell_signals:
             for i, (date, price) in enumerate(sell_signals):
                 ax1.scatter(date, price, color='red', marker='v', s=200,
-                           zorder=5, label='卖出' if i == 0 else '')
-                ax1.annotate('卖出', xy=(date, price), xytext=(5, -20),
+                           zorder=5, label='sell' if i == 0 else '')
+                ax1.annotate('sell', xy=(date, price), xytext=(5, -20),
                             textcoords='offset points', color='red',
                             fontsize=9, fontweight='bold',
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='red', alpha=0.3))
         
-        ax1.set_ylabel('价格 ($)', color='white', fontsize=12)
-        ax1.set_title('回测K线图（带买卖信号）', color='white', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('price ($)', color='white', fontsize=12)
+        ax1.set_title('Backtest K line', color='white', fontsize=14, fontweight='bold')
         ax1.legend(loc='upper left')
         ax1.grid(True, alpha=0.3, color='gray')
         ax1.tick_params(colors='white')
@@ -457,8 +457,8 @@ class BacktestEngine:
         ax2.set_facecolor('#2d2d2d')
         colors = ['green' if closes[i] >= opens[i] else 'red' for i in range(len(dates))]
         ax2.bar(dates, volumes, color=colors, alpha=0.6, width=0.8)
-        ax2.set_ylabel('成交量', color='white', fontsize=12)
-        ax2.set_xlabel('日期', color='white', fontsize=12)
+        ax2.set_ylabel('volume', color='white', fontsize=12)
+        ax2.set_xlabel('date', color='white', fontsize=12)
         ax2.grid(True, alpha=0.3, color='gray')
         ax2.tick_params(colors='white')
         ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
