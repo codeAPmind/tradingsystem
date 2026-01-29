@@ -237,51 +237,28 @@ class BacktestWidget(QWidget):
         
         layout.addWidget(basic_group)
         
-        # 策略参数组
-        strategy_group = QGroupBox("策略参数")
-        strategy_layout = QFormLayout(strategy_group)
+        # 策略参数组（容器）
+        self.strategy_params_container = QGroupBox("策略参数")
+        self.strategy_params_layout = QVBoxLayout(self.strategy_params_container)
+        
+        # 创建TSF-LSMA参数组
+        self.tsf_params_group = self.create_tsf_params()
+        self.strategy_params_layout.addWidget(self.tsf_params_group)
+        
+        # 创建动量情绪参数组（初始隐藏）
+        self.momentum_params_group = self.create_momentum_params()
+        self.momentum_params_group.setVisible(False)
+        self.strategy_params_layout.addWidget(self.momentum_params_group)
         
         # 策略选择
-        self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(['TSF-LSMA', 'MACD', 'RSI'])
-        self.strategy_combo.currentTextChanged.connect(self.on_strategy_changed)
-        strategy_layout.addRow("策略:", self.strategy_combo)
         
         # TSF周期
-        self.tsf_period_input = QDoubleSpinBox()
-        self.tsf_period_input.setRange(3, 50)
-        self.tsf_period_input.setValue(9)
-        self.tsf_period_input.setDecimals(0)
-        strategy_layout.addRow("TSF周期:", self.tsf_period_input)
         
-        # LSMA周期
-        self.lsma_period_input = QDoubleSpinBox()
-        self.lsma_period_input.setRange(5, 100)
-        self.lsma_period_input.setValue(20)
-        self.lsma_period_input.setDecimals(0)
-        strategy_layout.addRow("LSMA周期:", self.lsma_period_input)
         
-        # 阈值类型
-        self.use_percent_check = QComboBox()
-        self.use_percent_check.addItems(['绝对值', '百分比'])
-        self.use_percent_check.currentIndexChanged.connect(self.on_threshold_type_changed)
-        strategy_layout.addRow("阈值类型:", self.use_percent_check)
         
-        # 买入阈值
-        self.buy_threshold_input = QDoubleSpinBox()
-        self.buy_threshold_input.setRange(0, 100)
-        self.buy_threshold_input.setValue(0.5)
-        self.buy_threshold_input.setDecimals(2)
-        strategy_layout.addRow("买入阈值:", self.buy_threshold_input)
         
-        # 卖出阈值
-        self.sell_threshold_input = QDoubleSpinBox()
-        self.sell_threshold_input.setRange(0, 100)
-        self.sell_threshold_input.setValue(0.5)
-        self.sell_threshold_input.setDecimals(2)
-        strategy_layout.addRow("卖出阈值:", self.sell_threshold_input)
         
-        layout.addWidget(strategy_group)
+        layout.addWidget(self.strategy_params_container)
         
         # 按钮
         button_layout = QHBoxLayout()
@@ -400,16 +377,113 @@ class BacktestWidget(QWidget):
     
     def on_strategy_changed(self, strategy):
         """策略改变时的回调"""
+        print("===============")
         if strategy == '动量情绪':
+            # 切换到动量情绪参数
+            self.tsf_params_group.setVisible(False)
+            self.momentum_params_group.setVisible(True)
+            
             # 提示用户该策略的特点
             self.status_label.setText(
                 "动量情绪策略: 结合RSI+MACD+ADX，支持相对强度过滤和凯利仓位"
             )
         elif strategy == 'TSF-LSMA':
+            # 切换到TSF-LSMA参数
+            self.tsf_params_group.setVisible(True)
+            self.momentum_params_group.setVisible(False)
+            
             self.status_label.setText(
                 "TSF-LSMA策略: 时间序列预测和最小二乘移动平均"
             )
     
+    
+    def create_tsf_params(self):
+        """创建TSF-LSMA策略参数组"""
+        group = QGroupBox()
+        layout = QFormLayout(group)
+        
+        # TSF周期
+        self.tsf_period_input = QDoubleSpinBox()
+        self.tsf_period_input.setRange(1, 100)
+        self.tsf_period_input.setValue(9)
+        self.tsf_period_input.setDecimals(0)
+        layout.addRow("TSF周期:", self.tsf_period_input)
+        
+        # LSMA周期
+        self.lsma_period_input = QDoubleSpinBox()
+        self.lsma_period_input.setRange(1, 100)
+        self.lsma_period_input.setValue(20)
+        self.lsma_period_input.setDecimals(0)
+        layout.addRow("LSMA周期:", self.lsma_period_input)
+        
+        # 阈值类型
+        self.threshold_type_combo = QComboBox()
+        self.threshold_type_combo.addItems(['绝对值', '百分比'])
+        self.threshold_type_combo.currentTextChanged.connect(self.on_threshold_type_changed)
+        layout.addRow("阈值类型:", self.threshold_type_combo)
+        
+        # 买入阈值
+        self.buy_threshold_input = QDoubleSpinBox()
+        self.buy_threshold_input.setRange(-100, 100)
+        self.buy_threshold_input.setValue(0.5)
+        self.buy_threshold_input.setSingleStep(0.1)
+        layout.addRow("买入阈值:", self.buy_threshold_input)
+        
+        # 卖出阈值
+        self.sell_threshold_input = QDoubleSpinBox()
+        self.sell_threshold_input.setRange(-100, 100)
+        self.sell_threshold_input.setValue(0.5)
+        self.sell_threshold_input.setSingleStep(0.1)
+        layout.addRow("卖出阈值:", self.sell_threshold_input)
+        
+        return group
+    
+    def create_momentum_params(self):
+        """创建动量情绪策略参数组"""
+        group = QGroupBox()
+        layout = QFormLayout(group)
+        
+        # RSI参数
+        self.rsi_period_input = QDoubleSpinBox()
+        self.rsi_period_input.setRange(5, 50)
+        self.rsi_period_input.setValue(14)
+        self.rsi_period_input.setDecimals(0)
+        layout.addRow("RSI周期:", self.rsi_period_input)
+        
+        self.rsi_threshold_input = QDoubleSpinBox()
+        self.rsi_threshold_input.setRange(30, 70)
+        self.rsi_threshold_input.setValue(45)
+        self.rsi_threshold_input.setDecimals(0)
+        layout.addRow("RSI阈值:", self.rsi_threshold_input)
+        
+        # 相对强度过滤
+        self.use_rs_checkbox = QComboBox()
+        self.use_rs_checkbox.addItems(['启用', '禁用'])
+        layout.addRow("相对强度过滤:", self.use_rs_checkbox)
+        
+        # 凯利仓位管理
+        self.use_kelly_checkbox = QComboBox()
+        self.use_kelly_checkbox.addItems(['启用', '禁用'])
+        layout.addRow("凯利仓位:", self.use_kelly_checkbox)
+        
+        self.kelly_fraction_input = QDoubleSpinBox()
+        self.kelly_fraction_input.setRange(0.1, 1.0)
+        self.kelly_fraction_input.setValue(0.25)
+        self.kelly_fraction_input.setSingleStep(0.05)
+        self.kelly_fraction_input.setDecimals(2)
+        layout.addRow("凯利分数:", self.kelly_fraction_input)
+        
+        # 情绪分析
+        self.use_sentiment_checkbox = QComboBox()
+        self.use_sentiment_checkbox.addItems(['禁用', '启用'])
+        layout.addRow("情绪分析:", self.use_sentiment_checkbox)
+        
+        # 说明文字
+        note_label = QLabel("注: 相对强度需要SPY数据\n情绪分析需要API密钥")
+        note_label.setStyleSheet("color: gray; font-size: 10px;")
+        layout.addRow("", note_label)
+        
+        return group
     def format_stock_code(self, code, market):
         """
         格式化股票代码
@@ -450,16 +524,6 @@ class BacktestWidget(QWidget):
                 # 直接返回
                 return code
     
-    def on_strategy_changed(self, strategy_name):
-        """策略改变回调"""
-        # 根据策略显示/隐藏相关参数
-        if strategy_name == 'TSF-LSMA':
-            self.tsf_period_input.setEnabled(True)
-            self.lsma_period_input.setEnabled(True)
-        elif strategy_name == 'MACD':
-            self.tsf_period_input.setEnabled(False)
-            self.lsma_period_input.setEnabled(False)
-        # TODO: 其他策略
     
     def on_threshold_type_changed(self, index):
         """阈值类型改变"""
@@ -494,7 +558,7 @@ class BacktestWidget(QWidget):
             'strategy': self.strategy_combo.currentText(),
             'tsf_period': int(self.tsf_period_input.value()),
             'lsma_period': int(self.lsma_period_input.value()),
-            'use_percent': self.use_percent_check.currentIndex() == 1,
+            'use_percent': self.threshold_type_combo.currentIndex() == 1,
             'buy_threshold': self.buy_threshold_input.value(),
             'sell_threshold': self.sell_threshold_input.value(),
             'buy_threshold_pct': self.buy_threshold_input.value(),
