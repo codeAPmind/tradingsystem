@@ -358,6 +358,9 @@ class MainWindow(QMainWindow):
             
             # 更新状态栏
             self.update_time_label.setText(f"最后更新: {datetime.now().strftime('%H:%M:%S')}")
+        
+        # 更新新闻组件（无论是否获取到数据都尝试更新）
+        self.news_widget.update_news(stock_code)
     
     def on_signal_received(self, signal: dict):
         """收到信号回调"""
