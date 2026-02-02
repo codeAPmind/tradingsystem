@@ -122,22 +122,56 @@ def get_market_type(stock_code: str) -> str:
     --------
     str : 'US', 'HK', 'A'
     """
-    code = stock_code.strip()
+    # code = stock_code.strip()
     
-    # 显式指定前缀的港股
+    # # 显式指定前缀的港股
+    # if code.startswith('HK.'):
+    #     return 'HK'
+    
+    # # 纯数字代码
+    # if code.isdigit():
+    #     # 4~5位数字：优先按港股处理（例如 1797 -> HK.01797）
+    #     if 4 <= len(code) <= 5:
+    #         return 'HK'
+    #     # 6位数字：按A股处理
+    #     if len(code) == 6:
+    #         return 'A'
+    
+    # # 其他情况默认按美股处理（英文代码等）
+    # return 'US'
+
+    """
+    识别股票所属市场
+    
+    Parameters:
+    -----------
+    stock_code : str
+        股票代码
+    
+    Returns:
+    --------
+    str : 'US', 'HK', 'A'
+    """
+    code = stock_code.strip().upper()
+    
+    # 🆕 A股：SH. 或 SZ. 前缀
+    if code.startswith('SH.') or code.startswith('SZ.'):
+        return 'A'
+    
+    # 港股：HK. 前缀
     if code.startswith('HK.'):
         return 'HK'
     
     # 纯数字代码
     if code.isdigit():
-        # 4~5位数字：优先按港股处理（例如 1797 -> HK.01797）
+        # 4~5位数字：优先按港股处理
         if 4 <= len(code) <= 5:
             return 'HK'
         # 6位数字：按A股处理
         if len(code) == 6:
             return 'A'
     
-    # 其他情况默认按美股处理（英文代码等）
+    # 其他情况默认按美股处理
     return 'US'
 
 

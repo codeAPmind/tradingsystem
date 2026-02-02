@@ -182,6 +182,7 @@ class DataManager:
             print(f"🔄 [Manager] 自动格式化: {original_code} → {stock_code}")
         else:
             stock_code = original_code
+        print(stock_code)
         
         market = get_market_type(stock_code)
         
@@ -229,11 +230,19 @@ class DataManager:
         
         elif market == 'A':
             # A股 - 使用Tushare
-            if not self._init_tushare():
-                print(f"   ❌ Tushare初始化失败")
+            # if not self._init_tushare():
+            #     print(f"   ❌ Tushare初始化失败")
+            #     return None
+            
+            # df = self.tushare_fetcher.get_history_kline(
+            #     stock_code, start_date, end_date
+            # )
+            if not self._init_futu():
+                print(f"   ❌ Futu初始化失败")
+                print(f"   请确保: 1) Futu OpenD已启动 2) 已登录账户")
                 return None
             
-            df = self.tushare_fetcher.get_history_kline(
+            df = self.futu_fetcher.get_history_kline(
                 stock_code, start_date, end_date
             )
         
