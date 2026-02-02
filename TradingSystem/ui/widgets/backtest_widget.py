@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal, QDateTime
 from PyQt6.QtGui import QFont
 import pandas as pd
+import re
 from datetime import datetime, timedelta
 try:
     import matplotlib
@@ -193,7 +194,7 @@ class BacktestWidget(QWidget):
         
         # 市场选择
         self.market_combo = QComboBox()
-        self.market_combo.addItems(['美股', '港股'])
+        self.market_combo.addItems(['美股', '港股', 'A股'])
         self.market_combo.currentTextChanged.connect(self.on_market_changed)
         basic_layout.addRow("市场:", self.market_combo)
         
@@ -364,15 +365,21 @@ class BacktestWidget(QWidget):
         """市场选择变化回调"""
         if market == '美股':
             self.stock_code_input.setPlaceholderText("输入字母代码，如 TSLA")
-            # 如果当前是港股代码，清空
+            # 如果当前不是美股代码，清空
             current = self.stock_code_input.text().strip()
-            if current.startswith('HK.'):
+            if current.startswith(('HK.', 'SH.', 'SZ.')):
                 self.stock_code_input.clear()
-        else:  # 港股
+        elif market == '港股':
             self.stock_code_input.setPlaceholderText("输入数字代码，如 01797")
             # 如果当前不是港股格式，清空
             current = self.stock_code_input.text().strip()
-            if current and not current.startswith('HK.') and not current.isdigit():
+            if not current.startswith('HK.') and not current.isdigit():
+                self.stock_code_input.clear()
+        else:  # A股
+            self.stock_code_input.setPlaceholderText("输入代码，如 SZ.000001 或 SH.600000")
+            # 如果当前不是A股格式，清空
+            current = self.stock_code_input.text().strip()
+            if not current.startswith(('SH.', 'SZ.')):
                 self.stock_code_input.clear()
     
     def on_strategy_changed(self, strategy):
@@ -484,6 +491,75 @@ class BacktestWidget(QWidget):
         layout.addRow("", note_label)
         
         return group
+
+    def validate_stock_code(self, code: str, market: str) -> tuple:
+        """
+        验证股票代码格式
+        
+        Parameters:
+        -----------
+        code : str
+            股票代码
+        market : str
+            市场类型
+        
+        Returns:
+        --------
+        tuple : (是否有效, 错误信息)
+        """
+        code = code.strip().upper()
+        
+        if market == '美股':
+            # 美股：字母代码，1-5位
+            if not code:
+                return False, "请输入美股代码"
+            if not re.match(r'^[A-Z]{1,5}$', code):
+                return False, "美股代码格式错误（应为1-5位字母，如TSLA）"
+            return True, ""
+        
+        elif market == '港股':
+            # 港股：HK.xxxxx 或 纯数字
+            if not code:
+                return False, "请输入港股代码"
+            
+            if code.startswith('HK.'):
+                # 已有前缀，检查后面是否为数字
+                num_part = code[3:]
+                if not num_part.isdigit():
+                    return False, "港股代码格式错误（HK.后应为数字）"
+                return True, ""
+            else:
+                # 纯数字
+                if not code.isdigit():
+                    return False, "港股代码格式错误（应为数字或HK.xxxxx格式）"
+                return True, ""
+        
+        elif market == 'A股':
+            # A股：SZ.000001 或 SH.600000
+            if not code:
+                return False, "请输入A股代码"
+            
+            # 检查格式：必须是 SZ. 或 SH. 开头
+            if not code.startswith(('SZ.', 'SH.')):
+                return False, "A股代码必须以 SZ. 或 SH. 开头（如 SZ.000001 或 SH.600000）"
+            
+            # 检查点号后面是否为6位数字
+            parts = code.split('.')
+            if len(parts) != 2:
+                return False, "A股代码格式错误（应为 SZ.000001 或 SH.600000）"
+            
+            market_prefix, stock_num = parts
+            
+            if market_prefix not in ('SZ', 'SH'):
+                return False, "A股市场代码错误（应为 SZ 或 SH）"
+            
+            if not re.match(r'^\d{6}$', stock_num):
+                return False, "A股代码必须是6位数字（如 000001, 600000）"
+            
+            return True, ""
+        
+        return False, "未知市场类型"
+    
     def format_stock_code(self, code, market):
         """
         格式化股票代码
@@ -493,7 +569,7 @@ class BacktestWidget(QWidget):
         code : str
             原始代码
         market : str
-            市场（'美股' 或 '港股'）
+            市场（'美股', '港股' 或 'A股'）
         
         Returns:
         --------
@@ -515,14 +591,18 @@ class BacktestWidget(QWidget):
                 except ValueError:
                     # 不是纯数字，可能是错误输入
                     return f"HK.{code}"
+        elif market == 'A股':
+            # A股处理：填什么就是什么，不做格式化
+            # 只统一转大写
+            return code
         else:
             # 美股处理
-            if code.startswith('HK.'):
-                # 移除HK.前缀（用户可能切换了市场）
-                return code.replace('HK.', '')
-            else:
-                # 直接返回
-                return code
+            if code.startswith(('HK.', 'SH.', 'SZ.')):
+                # 移除其他市场前缀（用户可能切换了市场）
+                for prefix in ['HK.', 'SH.', 'SZ.']:
+                    code = code.replace(prefix, '')
+            # 直接返回
+            return code
     
     
     def on_threshold_type_changed(self, index):
@@ -543,6 +623,12 @@ class BacktestWidget(QWidget):
         # 获取原始代码
         raw_code = self.stock_code_input.text().strip()
         market = self.market_combo.currentText()
+        
+        # 验证代码格式
+        is_valid, error_msg = self.validate_stock_code(raw_code, market)
+        if not is_valid:
+            QMessageBox.warning(self, "代码格式错误", error_msg)
+            return
         
         # 格式化代码
         stock_code = self.format_stock_code(raw_code, market)
