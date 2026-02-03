@@ -1,0 +1,13 @@
+{
+  "name": "英伟达策略",
+  "enabled": true,
+  "stock_code": "NVDA",
+  "strategy": "TSF-LSMA",
+  "parameters": {
+    "tsf_period": 9,
+    "lsma_period": 20,
+    "use_percent": true,
+    "buy_threshold_pct": 0.5,
+    "sell_threshold_pct": 10
+  }
+}

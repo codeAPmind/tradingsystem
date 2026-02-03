@@ -1,0 +1,24 @@
+{
+  "_comment": "策略配置模板 - 复制此文件并修改",
+  "name": "策略名称",
+  "description": "策略描述",
+  "enabled": true,
+  "stock_code": "STOCK_CODE",
+  "strategy": "STRATEGY_NAME",
+  "parameters": {
+    "_comment_tsf": "TSF-LSMA策略参数",
+    "tsf_period": 9,
+    "lsma_period": 20,
+    "use_percent": true,
+    "buy_threshold_pct": 0.5,
+    "sell_threshold_pct": 0.5,
+    
+    "_comment_momentum": "动量情绪策略参数",
+    "rsi_period": 14,
+    "rsi_threshold": 45,
+    "use_relative_strength": false,
+    "use_kelly": true,
+    "kelly_fraction": 0.25,
+    "use_sentiment": false
+  }
+}
