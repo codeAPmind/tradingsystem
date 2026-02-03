@@ -50,6 +50,7 @@ class BacktestThread(QThread):
             from core.backtest_engine import BacktestEngine
             from strategies.backtrader_tsf_lsma import TSFLSMAStrategy
             from strategies.momentum_sentiment_strategy import MomentumSentimentStrategy
+            from strategies.backtrader_bollinger_rsi import BacktraderBollingerRSI
             
             self.progress.emit("正在获取数据...")
             
@@ -122,6 +123,18 @@ class BacktestThread(QThread):
                     'printlog': False
                 }
                 engine.add_strategy(MomentumSentimentStrategy, **momentum_params)
+            elif strategy_name == '布林带RSI':
+                # 布林带RSI策略
+                bollinger_params = {
+                    'bb_period': self.params.get('bb_period', 15),
+                    'bb_devfactor': self.params.get('bb_devfactor', 2.0),
+                    'rsi_period': self.params.get('bb_rsi_period', 10),
+                    'rsi_oversold': self.params.get('bb_rsi_oversold', 35),
+                    'rsi_overbought': self.params.get('bb_rsi_overbought', 75),
+                    'bb_touch_pct': self.params.get('bb_touch_pct', 0.01),
+                    'printlog': False
+                }
+                engine.add_strategy(BacktraderBollingerRSI, **bollinger_params)
             else:
                 # TSF-LSMA策略（默认）
                 engine.add_strategy(TSFLSMAStrategy, **strategy_params)
@@ -200,7 +213,7 @@ class BacktestWidget(QWidget):
         
         # 策略选择（新增）
         self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(['TSF-LSMA', '动量情绪'])
+        self.strategy_combo.addItems(['TSF-LSMA', '动量情绪', '布林带RSI'])
         self.strategy_combo.currentTextChanged.connect(self.on_strategy_changed)
         basic_layout.addRow("策略:", self.strategy_combo)
         
@@ -250,6 +263,11 @@ class BacktestWidget(QWidget):
         self.momentum_params_group = self.create_momentum_params()
         self.momentum_params_group.setVisible(False)
         self.strategy_params_layout.addWidget(self.momentum_params_group)
+        
+        # 创建布林带RSI参数组（初始隐藏）
+        self.bollinger_params_group = self.create_bollinger_params()
+        self.bollinger_params_group.setVisible(False)
+        self.strategy_params_layout.addWidget(self.bollinger_params_group)
         
         # 策略选择
         
@@ -394,10 +412,22 @@ class BacktestWidget(QWidget):
             self.status_label.setText(
                 "动量情绪策略: 结合RSI+MACD+ADX，支持相对强度过滤和凯利仓位"
             )
+        elif strategy == '布林带RSI':
+            # 切换到布林带RSI参数
+            self.tsf_params_group.setVisible(False)
+            self.momentum_params_group.setVisible(False)
+            if hasattr(self, 'bollinger_params_group'):
+                self.bollinger_params_group.setVisible(True)
+            
+            self.status_label.setText(
+                "布林带RSI策略: 适用于震荡行情，布林带+RSI双重确认"
+            )
         elif strategy == 'TSF-LSMA':
             # 切换到TSF-LSMA参数
             self.tsf_params_group.setVisible(True)
             self.momentum_params_group.setVisible(False)
+            if hasattr(self, 'bollinger_params_group'):
+                self.bollinger_params_group.setVisible(False)
             
             self.status_label.setText(
                 "TSF-LSMA策略: 时间序列预测和最小二乘移动平均"
@@ -492,6 +522,59 @@ class BacktestWidget(QWidget):
         
         return group
 
+    
+    def create_bollinger_params(self):
+        """创建布林带RSI策略参数组"""
+        group = QGroupBox()
+        layout = QFormLayout(group)
+        
+        # 布林带参数
+        self.bb_period_input = QDoubleSpinBox()
+        self.bb_period_input.setRange(5, 50)
+        self.bb_period_input.setValue(15)  # 阿里最优
+        self.bb_period_input.setDecimals(0)
+        layout.addRow("布林带周期:", self.bb_period_input)
+        
+        self.bb_devfactor_input = QDoubleSpinBox()
+        self.bb_devfactor_input.setRange(1.0, 3.0)
+        self.bb_devfactor_input.setValue(2.0)
+        self.bb_devfactor_input.setSingleStep(0.1)
+        self.bb_devfactor_input.setDecimals(1)
+        layout.addRow("标准差倍数:", self.bb_devfactor_input)
+        
+        # RSI参数
+        self.bb_rsi_period_input = QDoubleSpinBox()
+        self.bb_rsi_period_input.setRange(5, 50)
+        self.bb_rsi_period_input.setValue(10)  # 阿里最优
+        self.bb_rsi_period_input.setDecimals(0)
+        layout.addRow("RSI周期:", self.bb_rsi_period_input)
+        
+        self.bb_rsi_oversold_input = QDoubleSpinBox()
+        self.bb_rsi_oversold_input.setRange(20, 50)
+        self.bb_rsi_oversold_input.setValue(35)  # 阿里最优
+        self.bb_rsi_oversold_input.setDecimals(0)
+        layout.addRow("RSI超卖线:", self.bb_rsi_oversold_input)
+        
+        self.bb_rsi_overbought_input = QDoubleSpinBox()
+        self.bb_rsi_overbought_input.setRange(50, 90)
+        self.bb_rsi_overbought_input.setValue(75)  # 阿里最优
+        self.bb_rsi_overbought_input.setDecimals(0)
+        layout.addRow("RSI超买线:", self.bb_rsi_overbought_input)
+        
+        # 触及阈值
+        self.bb_touch_pct_input = QDoubleSpinBox()
+        self.bb_touch_pct_input.setRange(0.001, 0.05)
+        self.bb_touch_pct_input.setValue(0.01)
+        self.bb_touch_pct_input.setSingleStep(0.001)
+        self.bb_touch_pct_input.setDecimals(3)
+        layout.addRow("触及阈值:", self.bb_touch_pct_input)
+        
+        # 说明文字
+        note_label = QLabel("注: 参数为阿里巴巴实测最优值\n适用于震荡行情")
+        note_label.setStyleSheet("color: gray; font-size: 10px;")
+        layout.addRow("", note_label)
+        
+        return group
     def validate_stock_code(self, code: str, market: str) -> tuple:
         """
         验证股票代码格式
@@ -650,6 +733,17 @@ class BacktestWidget(QWidget):
             'buy_threshold_pct': self.buy_threshold_input.value(),
             'sell_threshold_pct': self.sell_threshold_input.value(),
         }
+        
+        # 如果是布林带RSI策略，添加额外参数
+        if params['strategy'] == '布林带RSI':
+            params.update({
+                'bb_period': int(self.bb_period_input.value()),
+                'bb_devfactor': self.bb_devfactor_input.value(),
+                'bb_rsi_period': int(self.bb_rsi_period_input.value()),
+                'bb_rsi_oversold': self.bb_rsi_oversold_input.value(),
+                'bb_rsi_overbought': self.bb_rsi_overbought_input.value(),
+                'bb_touch_pct': self.bb_touch_pct_input.value(),
+            })
         
         # 验证参数
         if not raw_code:

@@ -12,6 +12,7 @@ from datetime import datetime
 from strategies.tsf_lsma_strategy import TSFLSMAStrategy
 from strategies.macd_strategy import MACDStrategy
 from strategies.rsi_strategy import RSIStrategy
+from strategies.bollinger_rsi_strategy import BollingerRSIStrategy
 # 导入动量情绪策略（需要适配）
 try:
     from strategies.momentum_sentiment_strategy import MomentumSentimentStrategy as BacktraderMomentumStrategy
@@ -48,6 +49,9 @@ class StrategyEngine:
         
         # RSI策略
         self.strategy_classes['RSI'] = RSIStrategy
+        
+        # Bollinger + RSI 策略
+        self.strategy_classes['BollingerRSI'] = BollingerRSIStrategy
         
         # 动量情绪策略（如果可用）
         if MOMENTUM_AVAILABLE:
